@@ -1,5 +1,9 @@
 # Ask for admin privileges
-if (!([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")) { Start-Process powershell.exe "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`"" -Verb RunAs; exit }
+if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+    Write-Host "Admin privileges are required, restarting as admin..." -ForegroundColor Red
+    Start-Process powershell.exe -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`"" -Verb RunAs
+    exit
+}
 
 ########################################################
 
@@ -14,32 +18,33 @@ public static extern IntPtr GetStdHandle(int handle);
 $Handle = [Win32.NativeMethods]::GetStdHandle(-10)
 $success = $false
 
+# Retry logic for disabling Quick Edit mode
 while (-not $success) {
     $success = [Win32.NativeMethods]::SetConsoleMode($Handle, 0x0080)
 
     if ($success) {
-        Write-Host "Quick Edit mode has been disabled."
+        Write-Host "Quick Edit mode has been disabled." -ForegroundColor Green
     } else {
-        Write-Host "Failed to disable Quick Edit mode. Retrying..."
+        Write-Host "Failed to disable Quick Edit mode. Retrying..." -ForegroundColor Yellow
         Start-Sleep -Seconds 3
     }
 }
 
 ########################################################
 
-# check for process
-Write-Host -fore Green 'The debloat process will start shortly, the mouse and keyboard will be disabled until the operations are completed'
+# Check for process
+Write-Host -Fore Green 'The debloat process will start shortly. The mouse and keyboard will be disabled until the operations are completed.'
 
-while ($true) {
-    $process = Get-Process -Name SecurityHealthSystray -ErrorAction SilentlyContinue
+$processName = 'SecurityHealthSystray'
+$processCheckInterval = 3  # Interval in seconds
 
-    if ($process) {
-        Write-Host "SecurityHealthSystray is running."
-        break  # Exit the loop
-    }
-    
-    Start-Sleep -Seconds 3  # Wait for 1 second before checking again
+# Monitor process until it's found
+while (-not (Get-Process -Name $processName -ErrorAction SilentlyContinue)) {
+    Write-Host "$processName is not running. Checking again..." -ForegroundColor Yellow
+    Start-Sleep -Seconds $processCheckInterval
 }
+
+Write-Host "$processName is running." -ForegroundColor Green
 
 ########################################################
 
@@ -52,17 +57,28 @@ $code = @"
 $userInput = Add-Type -MemberDefinition $code -Name UserInput -Namespace UserInput -PassThru
 
 function Disable-UserInput {
-    $userInput::BlockInput($true)
+    try {
+        $userInput::BlockInput($true)
+        Write-Host "User input has been disabled." -ForegroundColor Green
+    }
+    catch {
+        Write-Host "Failed to disable user input." -ForegroundColor Red
+    }
 }
 
 # Disable user Input
 Disable-UserInput
 
-Start-Sleep -Seconds 30 | Out-Null
+Start-Sleep -Seconds 30
 
-# Start exe
-powerShell -ExecutionPolicy Bypass -File "C:\Windows\main.ps1" -wait
+# Start secondary script
+try {
+    Start-Process powershell.exe -ArgumentList "-ExecutionPolicy Bypass -File 'C:\Windows\main.ps1' -Wait"
+    Write-Host "Main script executed successfully." -ForegroundColor Green
+} catch {
+    Write-Host "Error starting the main script: $_" -ForegroundColor Red
+}
 
+# Force shutdown after operations
 Stop-Computer -Force
-break
 exit
